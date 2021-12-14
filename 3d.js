@@ -9,12 +9,24 @@ let cos = Math.cos;
 
 let default_params = {strokeStyle: 'black', lineWidth: 1};
 
-function draw_line(l, params) {
+function draw_coord(m) {
+	ctx.font = "15px Arial";
+	let p = m.point;
+	let coord = "(" + Math.round(p.x) + "," + Math.round(p.y) + "," + Math.round(p.z) + ")";
+	ctx.fillText(coord, m.x+xc, -m.y+yc-10);
+}
+
+function draw_line(a,b, params) {
     Object.assign(ctx, default_params);
     if (params) Object.assign(ctx, params);
     ctx.beginPath();
-	ctx.moveTo(l.a.x + xc, -l.a.y + yc);
-	ctx.lineTo(l.b.x + xc, -l.b.y + yc);
+
+    let x1 = a.x + xc, x2 = b.x + xc;
+    let y1 = -a.y + yc, y2 = -b.y + yc;
+	ctx.moveTo(x1, y1);
+	ctx.lineTo(x2, y2);
+
+	//draw_coord(l.a); draw_coord(l.b);
 	ctx.stroke();
 }
 
@@ -52,7 +64,7 @@ function view_from_front(lines) {
 	for (let L of lines) {
 		let a = {x: L.a.y, y: L.a.z};
 		let b = {x: L.b.y, y: L.b.z};
-		draw_line({a,b});
+		draw_line(a,b);
 	}
 }
 
@@ -60,7 +72,7 @@ function view_from_top(lines) {
 	for (let L of lines) {
 		let a = {x: L.a.x, y: L.a.y};
 		let b = {x: L.b.x, y: L.b.y};
-		draw_line({a,b});
+		draw_line(a,b);
 	}
 }
 
@@ -68,6 +80,12 @@ function move(figure, v) {
 	for (let L of figure) {
 		L.a = add(L.a, v);
 		L.b = add(L.b, v);
+	}
+}
+
+function move_surface(surface, v) {
+	for (let i=0; i < surface.points.length; i++) {
+		surface.points[i] = add(surface.points[i], v);
 	}
 }
 
@@ -102,12 +120,16 @@ function rotate_2D(p, a) {
 	};
 }
 
+function intersection(a,b,c,d) {
+	
+}
+
 function rotate_figure(figure, angle) {
-	for (let line of figure) {
-		line.a = rotate_around_Z(line.a, angle);
-		line.b = rotate_around_Z(line.b, angle);
-		//line.a = rotate_around_X(line.a, angle);
-		//line.b = rotate_around_X(line.b, angle);
+	for (let s of figure) {
+		for (let i=0; i < s.points.length; i++) {
+			s.points[i] = rotate_around_Z(s.points[i], angle);
+		}
+		s.n = rotate_around_Z(s.n, angle);
 	}
 }
 
@@ -122,6 +144,10 @@ let camera = {
 	roll: 0,
 	prev: {},
 };
+
+function cross(a,b) {
+	return P(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
+}
 
 function dot(a,b) {
 	return a.x*b.x + a.y*b.y + a.z*b.z;
@@ -147,6 +173,10 @@ function normalize(v) {
 	return scale(1/len(v), v);
 }
 
+function find_angle(a,b) {
+	return Math.acos( dot(a,b) / len(a) / len(b) );
+}
+
 let screen_distance = 1;
 
 function get_camera_vars(camera) {
@@ -157,16 +187,17 @@ function get_camera_vars(camera) {
 
 	let a = camera.yaw;
 	let th = camera.pitch;
+	let ph = camera.roll;
 	let p0 = camera.pos;
 
 	let n = P( cos(a)*cos(th), sin(a)*cos(th), sin(th) );
 
 	let D = -dot(n,p0);
 
-	let ex = rotate_around_Z( rotate_around_Y( P(0,1,0), th), a );
-	let ey = rotate_around_Z( rotate_around_Y( P(0,0,1), th), a );
+	let ex = rotate_around_Z( rotate_around_Y( rotate_around_X( P(0,1,0), ph), th), a );
+	let ey = rotate_around_Z( rotate_around_Y( rotate_around_X( P(0,0,1), ph), th), a );
 
-	camera.prev = {n,D,ex,ey};
+	camera.prev = {n,D,ex,ey, yaw: camera.yaw, pitch: camera.pitch, roll: camera.roll, pos: camera.pos};
 	return camera.prev;
 }
 
@@ -183,8 +214,81 @@ function project_point(point, camera) {
 	let cx = dot(ex, b);
 	let cy = dot(ey, b);
 
-	return {x: cx, y: cy, t, d};
+	//if (point.x == -30 && point.y == -30 && point.z == 0 && d < 2) console.log({x: cx, y: cy, t, d} );
+	return {x: cx, y: cy, t, d, point};
 }
+
+function draw_surface(surface, params) {
+	let {n,pos} = get_camera_vars(camera);
+	let shoot = subtract(surface.points[0], pos);
+	if (find_angle(surface.n, shoot) < Math.PI/2 ) return;
+
+	Object.assign(ctx, default_params);
+    if (params) Object.assign(ctx, params);
+
+    let f = project_point(surface.points[0], camera);
+    ctx.moveTo(f.x, f.y);
+    ctx.beginPath();
+
+	for (let p of surface.points) {
+		p = project_point(p, camera);
+		ctx.lineTo(p.x + xc, -p.y + yc);
+	}
+	ctx.lineTo(f.x + xc, -f.y + yc);
+	ctx.fillStyle = "#d9c3e0";
+	ctx.fill(); 
+
+	ctx.stroke();
+
+	draw_normal(surface);
+}
+
+function draw_normal(surface) {
+	let sum = P(0,0,0);
+	for (let p of surface.points) sum = add(sum, p);
+	let center = scale(1/surface.points.length, sum);
+
+	let lines = [];
+	let b = add(center, scale(5,surface.n));
+	lines[0] = {a: center, b };
+
+	for (let line of lines) {
+		draw_line( project_point(line.a, camera), project_point(line.b, camera) , {strokeStyle: 'green'});
+	}
+}
+
+function make_prism(surface, h) {
+	let res = [surface];
+
+	let opp = copy(surface);
+	move_surface(opp, scale(-h, surface.n) );
+	opp.n = scale(-1, surface.n);
+	res.push(opp);
+
+	for (let i=0; i < surface.points.length; i++) {
+		let next = (i+1)%surface.points.length;
+		let points = [surface.points[i], surface.points[next], opp.points[next], opp.points[i]  ];
+		let vf = subtract(points[1], points[0]);
+		let vl = subtract(points[points.length-1], points[0]);
+		let M = {
+			points,
+			n: normalize(cross(vf,vl)),
+		};
+		res.push(M);
+	}
+
+	console.log(res);
+	return res;
+}
+
+let s = 50;
+
+function draw_3d(figure, params) {
+	for (let surface of figure) {
+		draw_surface(surface, params);
+	}
+}
+
 
 function draw_real_3d(figure, params) {
 	for (let L of figure) {
@@ -215,37 +319,23 @@ function draw_real_3d(figure, params) {
 		}
 		*/
 
-		draw_line({a,b}, params);
+		draw_line(a,b, params);
 	}
 }
 
+let square = {
+	points: [ P(0,0,0), P(0,s,0), P(0,s,s), P(0,0,s) ],
+	n: P(-1,0,0),
+};
 
-let s = 50;
+let cube = make_prism(square, s);
 
-let square = [
-	L( P(0,0,0), P(0,s,0) ),
-	L( P(0,0,s), P(0,s,s) ),
-	L( P(0,0,0), P(0,0,s) ),
-	L( P(0,s,0), P(0,s,s) )
-];
+let triangle = {
+	points: [ P(0,0,0), P(0,s,0), P(0,s/2,s) ],
+	n: P(-1,0,0),
+}
 
-let pyramid_base = [
-	L( P(0,0,0), P(0,s,0) ),
-	L( P(s,0,0), P(s,s,0) ),
-	L( P(0,0,0), P(s,0,0) ),
-	L( P(0,s,0), P(s,s,0) )
-];
-
-let triangle = [
-	L( P(0,0,0), P(0,s,0) ),
-	L( P(0,s,0), P(0,s/2,s) ),
-	L( P(0,s/2,s), P(0,0,0) )
-];
-
-let cube = stretch_along_X(square, s);
-let roof = stretch_along_X(triangle, s/3);
-//move(roof, P(0,15,0) );
-let pyramid = make_pyramid(pyramid_base, P(s/2,s/2,s) );
+let roof = make_prism(triangle, s/3);
 
 let grid = [];
 let size = 30;
@@ -257,7 +347,7 @@ for (let i = -size; i <= size; i+=5) {
 	);
 }
 
-freq = 20;
+freq = 1;
 
 function clear_canvas() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -275,6 +365,8 @@ function camera_animation() {
 		camera.pos.x += k*freq/100;
 	}, freq);
 }
+
+
 
 let holding = {};
 
@@ -299,6 +391,9 @@ setInterval(function(){
 	if (holding.e) v.z += 1;
 	if (holding.q) v.z -= 1;
 
+	if (holding.z) camera.roll += 0.02;
+	if (holding.c) camera.roll -= 0.02;
+
 	if (len(v) > 0) camera.pos = add(camera.pos, normalize(v));
 }, 10);
 
@@ -315,14 +410,18 @@ document.addEventListener('mousemove', e => {
 
 
 setInterval(function(){
-	clear_canvas();
+	// Movements
+	rotate_figure(cube, 0.02);
+}, freq);
 
-	rotate_figure(pyramid, freq/1000);
-	//draw_real_3d(cube);
+setInterval(function(){
+	clear_canvas();
+	//move(cube, P(0,0,1) );
 	draw_real_3d(grid, {strokeStyle: 'grey'} );
-	draw_real_3d(pyramid,  {strokeStyle: 'red', lineWidth: 3} );
-	//view_from_front(cube);
-	//view_from_front(grid);
+	//draw_real_3d(house,  {strokeStyle: 'purple', lineWidth: 5} );
+	//view_from_top(cube);
+	//draw_3d(roof);
+	draw_3d(cube);
 }, freq);
 
 //view_from_top(cube);
