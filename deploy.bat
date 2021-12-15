@@ -16,7 +16,8 @@ git commit -m 'deploy'
 
 # if you are deploying to https://<USERNAME>.github.io
 git push -f https://github.com/scorpjke/3d.git master
-# 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
+# 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
+
 cd ..\
 
 # if you are deploying to https://<USERNAME>.github.io/<REPO>
