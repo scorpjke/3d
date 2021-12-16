@@ -1,8 +1,8 @@
 var canvas = document.getElementById("myCanvas");
 var ctx = canvas.getContext("2d");
 
-let xc = 600;
-let yc = 400;
+let WIDTH = 1200;
+let HEIGHT = 800;
 
 let sin = Math.sin;
 let cos = Math.cos;
@@ -13,7 +13,7 @@ function draw_coord(m) {
 	ctx.font = "15px Arial";
 	let p = m.point;
 	let coord = "(" + Math.round(p.x) + "," + Math.round(p.y) + "," + Math.round(p.z) + ")";
-	ctx.fillText(coord, m.x+xc, -m.y+yc-10);
+	ctx.fillText(coord, m.x, m.y-10);
 }
 
 function draw_line(a,b, params) {
@@ -24,16 +24,16 @@ function draw_line(a,b, params) {
     if (params) Object.assign(ctx, params);
     ctx.beginPath();
 
-	ctx.moveTo(a.x + xc, -a.y + yc);
-	ctx.lineTo(b.x + xc, -b.y + yc);
+	ctx.moveTo(a.x, a.y);
+	ctx.lineTo(b.x, b.y);
 
 	//draw_coord(l.a); draw_coord(l.b);
 
 	ctx.stroke();
 
-	if (params.circle_at_the_tip) {
+	if (params && params.circle_at_the_tip) {
 	    ctx.beginPath();
-	    ctx.arc(b.x + xc, -b.y + yc, 5, 0, 2 * Math.PI);
+	    ctx.arc(b.x, b.y, 5, 0, 2 * Math.PI);
 	    ctx.fillStyle = 'red';
 	    ctx.strokeStyle = 'red';
 	    ctx.fill()
@@ -50,16 +50,12 @@ function copy(o) {
 }
 
 function move(figure, v) {
-	for (let s of figure) {
-		for (let i=0; i < s.points.length; i++) {
-			s.points[i] = add(s.points[i], v);
-		}
-	}
+	for (let s of figure.polygons) move_polygon(s, v);
 }
 
-function move_surface(surface, v) {
-	for (let i=0; i < surface.points.length; i++) {
-		surface.points[i] = add(surface.points[i], v);
+function move_polygon(polygon, v) {
+	for (let i=0; i < polygon.points.length; i++) {
+		polygon.points[i] = add(polygon.points[i], v);
 	}
 }
 
@@ -87,6 +83,10 @@ function rotate_around_Z(p, a) {
 	};
 }
 
+function rotate_full(p, roll, pitch, yaw) {
+	return rotate_around_Z( rotate_around_Y( rotate_around_X( p, roll), pitch), yaw );
+}
+
 function rotate_2D(p, a) {
 	return {
 		x: cos(a)*p.x - sin(a)*p.y,
@@ -95,7 +95,7 @@ function rotate_2D(p, a) {
 }
 
 function rotate_figure(figure, angle) {
-	for (let s of figure) {
+	for (let s of figure.polygons) {
 		for (let i=0; i < s.points.length; i++) {
 			s.points[i] = rotate_around_Z(s.points[i], angle);
 		}
@@ -114,58 +114,53 @@ let normalize = (v) => scale(1/len(v), v);
 let find_angle = (a,b) => Math.acos( dot(a,b) / (len(a) * len(b)) );
 let equal = (a,b) => a.x == b.x && a.y == b.y && a.z == b.z;
 
-let screen_distance = 1;
 
 let camera = {
-	pos: P(-100,0,25),
+	pos: P(-200,0,100),
 	yaw: 0,
-	pitch: 0,
+	pitch: -0.5,
 	roll: 0,
 	prev: {},
 };
 
-function get_camera_vars(camera) {
-	if (camera.pos == camera.prev.pos
-	 && camera.yaw == camera.prev.yaw
-	 && camera.pitch == camera.prev.pitch 
-	 && camera.roll == camera.prev.roll ) return camera.prev;
+function calc_camera_vars(camera) {
+	let {yaw, pitch, roll, pos} = camera;
 
-	let a = camera.yaw;
-	let th = camera.pitch;
-	let ph = camera.roll;
-	let p0 = camera.pos;
+	//camera.n = P( cos(yaw)*cos(pitch), sin(yaw)*cos(pitch), sin(pitch) );
 
-	let n = P( cos(a)*cos(th), sin(a)*cos(th), sin(th) );
+	camera.n  = rotate_full( P(1,0,0), 0, pitch, yaw);
+	camera.ex = rotate_full( P(0,1,0), roll, pitch, yaw);
+	camera.ey = rotate_full( P(0,0,1), roll, pitch, yaw);
 
-	let D = -dot(n,p0);
-
-	let ex = rotate_around_Z( rotate_around_Y( rotate_around_X( P(0,1,0), ph), th), a );
-	let ey = rotate_around_Z( rotate_around_Y( rotate_around_X( P(0,0,1), ph), th), a );
-
-	camera.prev = {n,D,ex,ey, yaw: camera.yaw, pitch: camera.pitch, roll: camera.roll, pos: camera.pos};
-	return camera.prev;
+	camera.D = -dot(camera.n, pos);
 }
 
+calc_camera_vars(camera);
+
+let aspect_ratio = WIDTH/HEIGHT;
+let angle_of_view = 2*Math.PI/3;
+let F = 1/Math.tan(angle_of_view/2);
+
 function project_point(point) {
-	if (equal(point,camera.pos) ) return {x:0, y:0};
-	let {n,D,ex,ey} = get_camera_vars(camera);
+	let {n,pos,ex,ey} = camera;
+	if (equal(point,pos) ) return {x:0, y:0};
 
-	let t = - (dot(n,point) + D) / dot(n,n);
-
-	let p = add(point, scale(t,n) );
-
-	let d = len(subtract(point, p));
-
-	let b = scale(900/d, subtract(p, camera.pos));
+	let b = subtract(point, pos);
+	let cz = dot(n, b);
 	let cx = dot(ex, b);
 	let cy = dot(ey, b);
 
 	//if (point.x == -30 && point.y == -30 && point.z == 0 && d < 2) console.log({x: cx, y: cy, t, d} );
-	return {x: cx, y: cy, t, d, point};
+
+	//cx = cx*aspect_ratio*F*WIDTH/cz + WIDTH/2;
+	//cy = -(cx*F*HEIGHT/cz) + HEIGHT/2;
+	cx = cx/cz*900 + WIDTH/2;
+	cy = -cy/cz*900 + HEIGHT/2;
+	return {x: cx, y: cy, z: cz, point};
 }
 
 function from_2d_coord_to_ray(cx, cy) {
-	let {n,D,ex,ey} = get_camera_vars(camera);
+	let {n,D,ex,ey} = camera;
 
 	let b = P(ex.x*cx + ey.x*cy, ex.y*cx + ey.y*cy, ex.z*cx + ey.z*cy);
 
@@ -177,89 +172,93 @@ function intersection_between_line_and_plane(p, v, n, D) {
 	return add(p, scale(t,v) );
 }
 
-function point_is_on_surface(point, surface) {
-	//console.log("checking surface:", surface);
-	let n = cross(subtract(surface.points[1], surface.points[0]), subtract(surface.points[2], surface.points[1]) );
+function point_is_on_polygon(point, polygon) {
+	//console.log("checking polygon:", polygon);
+	let n = cross(subtract(polygon.points[1], polygon.points[0]), subtract(polygon.points[2], polygon.points[1]) );
 
-	for (let i=0; i < surface.points.length; i++) {
-		let next = (i+1)%surface.points.length;
-		let c = cross(subtract(point, surface.points[i]), subtract(surface.points[next], point) );
+	for (let i=0; i < polygon.points.length; i++) {
+		let next = (i+1)%polygon.points.length;
+		let c = cross(subtract(point, polygon.points[i]), subtract(polygon.points[next], point) );
 		//console.log(dot(c, n));
 		if (dot(c, n) > 0) return false;
 	}
-	//console.log("yes, point is on surface!");
+	//console.log("yes, point is on polygon!");
 	return true;
 }
 
-function raycast(r) {
-	let {n,pos} = get_camera_vars(camera);
-	let closest_surface;
+function raycast(pos, r) {
+	let closest_polygon;
 	let closest_distance = 1000000000;
 	let intersection;
 
 	for (let figure of world) {
-		for (let surface of figure) {
-			let n = surface.n;
+		for (let polygon of figure.polygons) {
+			let n = polygon.n;
 			if (dot(n, r) > 0) continue;
 
-			let D = -dot(surface.n, surface.points[0]);
+			let D = -dot(polygon.n, polygon.points[0]);
 			let t = -(dot(n,pos) + D) / dot(n,r);
 
 			if (t < 0) continue;
 			let path = scale(t,r);
 			let i = add(pos, path);
 
-			if (!point_is_on_surface(i, surface)) continue;
+			if (!point_is_on_polygon(i, polygon)) continue;
 
 			let d = len(path);
 			if (d < closest_distance) {
-				closest_surface = surface;
+				closest_polygon = polygon;
 				closest_distance = d;
 				intersection = i;
 			}
 		}
 	}
 
-	//console.log(closest_surface, closest_distance);
-	return closest_surface ? {point: intersection, surface: closest_surface} : null;
+	//console.log(closest_polygon, closest_distance);
+	return closest_polygon ? {point: intersection, polygon: closest_polygon} : null;
 }
 
-function draw_surface(surface, params) {
-	let {n,pos} = get_camera_vars(camera);
-	let shoot = subtract(surface.points[0], pos);
-	if (dot(surface.n, shoot) > 0 ) return;
+function draw_polygon(polygon, params) {
+	let {n,pos} = camera;
+	let shoot = subtract(polygon.points[0], pos);
+	if (dot(polygon.n, shoot) > 0 ) return;
 
 	Object.assign(ctx, default_params);
     if (params) Object.assign(ctx, params);
+    else if (polygon.parent) Object.assign(ctx, polygon.parent.params);
 
-    let f = project_point(surface.points[0]);
+    let f = project_point(polygon.points[0]);
     ctx.moveTo(f.x, f.y);
     ctx.beginPath();
 
-	for (let p of surface.points) {
+	for (let p of polygon.points) {
 		p = project_point(p);
-		ctx.lineTo(p.x + xc, -p.y + yc);
+		ctx.lineTo(p.x, p.y);
 	}
-	ctx.lineTo(f.x + xc, -f.y + yc);
+	ctx.lineTo(f.x, f.y);
 	ctx.fill(); 
 
 	ctx.stroke();
 
-	draw_normal(surface);
+	draw_normal(polygon);
 }
 
-function middle_point(surface) {
+function middle_point(polygon) {
 	let sum = P(0,0,0);
-	for (let p of surface.points) sum = add(sum, p);
-	let center = scale(1/surface.points.length, sum);
+	for (let p of polygon.points) sum = add(sum, p);
+	let center = scale(1/polygon.points.length, sum);
 	return center;
 }
 
-function draw_normal(surface) {
-	let center = middle_point(surface);
+function distance_to_polygon() {
+
+}
+
+function draw_normal(polygon) {
+	let center = middle_point(polygon);
 
 	let lines = [];
-	let b = add(center, scale(5,surface.n));
+	let b = add(center, scale(5,polygon.n));
 	lines[0] = {a: center, b };
 
 	for (let line of lines) {
@@ -267,36 +266,52 @@ function draw_normal(surface) {
 	}
 }
 
-function make_prism(surface, h) {
-	let res = [copy(surface)];
+function look_at(target) {
+	let {n,pos} = camera;
+	let v = subtract(target, pos);
 
-	let opp = copy(surface);
-	move_surface(opp, scale(-h, surface.n) );
-	opp.n = scale(-1, surface.n);
-	res.push(opp);
+	//camera.yaw = find_angle( P(1,0,0), P(v.x, v.y, 0) );
+	camera.yaw = Math.atan(v.y/v.x);
+	//camera.pitch = Math.PI/2 - find_angle( P(0,0,1), v );
+	camera.pitch = Math.PI/2 - Math.atan(Math.sqrt(v.x*v.x + v.y*v.y)/v.z);
+}
 
-	for (let i=0; i < surface.points.length; i++) {
-		let next = (i+1)%surface.points.length;
-		let points = [surface.points[i], surface.points[next], opp.points[next], opp.points[i]  ];
+function make_prism(polygon, h) {
+	let res = {
+		polygons: [copy(polygon)]
+	};
+
+	let opp = copy(polygon);
+
+	move_polygon(opp, scale(-h, polygon.n) );
+	opp.n = scale(-1, polygon.n);
+	res.polygons.push(opp);
+
+	for (let i=0; i < polygon.points.length; i++) {
+		let next = (i+1)%polygon.points.length;
+		let points = [polygon.points[i], polygon.points[next], opp.points[next], opp.points[i]  ];
 		let vf = subtract(points[1], points[0]);
 		let vl = subtract(points[2], points[1]);
 		let M = {
 			points,
 			n: normalize(cross(vf,vl)),
 		};
-		res.push(M);
+		res.polygons.push(M);
+	}
+	for (let p of res.polygons) {
+		p.parent = res;
 	}
 
 	return res;
 }
 
-function make_pyramid(surface, h) {
-	let res = [copy(surface)];
-	let peak = add(middle_point(surface), scale(-h,surface.n) );
+function make_pyramid(polygon, h) {
+	let res = [copy(polygon)];
+	let peak = add(middle_point(polygon), scale(-h,polygon.n) );
 
-	for (let i=0; i < surface.points.length; i++) {
-		let next = (i+1)%surface.points.length;
-		let points = [surface.points[i], surface.points[next], peak];
+	for (let i=0; i < polygon.points.length; i++) {
+		let next = (i+1)%polygon.points.length;
+		let points = [polygon.points[i], polygon.points[next], peak];
 		let vf = subtract(points[1], points[0]);
 		let vl = subtract(points[2], points[1]);
 		let M = {
@@ -310,7 +325,7 @@ function make_pyramid(surface, h) {
 }
 
 function make_regular_polygon(n, perimeter) {
-	let surface = {
+	let polygon = {
 		points: [ P(0,0,0) ],
 		n: P(0,0,-1),
 	};
@@ -319,14 +334,53 @@ function make_regular_polygon(n, perimeter) {
 
 	for (let i=1; i < n; i++) {
 		v = rotate_around_Z(v,a);
-		surface.points[i] = add(surface.points[i-1], v);
+		polygon.points[i] = add(polygon.points[i-1], v);
 	}
-	return surface;
+	return polygon;
 }
 
+function to_triangles(figure) {
+	let res = [];
+
+	for (let polygon of figure.polygons) {
+		if (polygon.points.length == 3) {
+			res.push(polygon);
+			continue;
+		}
+		for (let i=0; i < polygon.points.length-2; i++) {
+			let M = {
+				points: [polygon.points[0], polygon.points[i+1], polygon.points[i+2] ],
+				n: polygon.n,
+				parent: figure,
+			};
+			res.push(M);
+		}
+	}
+	figure.polygons = res;
+}
+
+/*
+function equal_polygons(a,b) {
+	for (let i=0; i < a.points.length; i++) {
+		i < 
+	}
+
+	return equal(a[0], b[0]) && 
+}
+
+
+function remove_invisible_polygons(figure) {
+	for (let i=0; i < figure.length; i++) {
+		for (let k=i+1; k < figure.length; k++) {
+			if (figure[i])
+		}
+	}
+}
+*/
+
 function draw_3d(figure) {
-	for (let surface of figure) {
-		draw_surface(surface, figure.params);
+	for (let polygon of figure.polygons) {
+		draw_polygon(polygon, figure.params);
 	}
 }
 
@@ -350,7 +404,7 @@ document.addEventListener('keyup', function(e){
 });
 
 setInterval(function(){
-	let {n,ex,ey} = get_camera_vars(camera);
+	let {n,ex,ey} = camera;
 	let step = 1;
 
 	let v = P(0,0,0);
@@ -380,12 +434,12 @@ canvas.addEventListener('mousemove', e => {
 });
 
 canvas.addEventListener('click', e => {
-	let {n,pos} = get_camera_vars(camera);
-	let r = from_2d_coord_to_ray(e.clientX - xc - 8, -e.clientY + yc + 7);
+	let {n,pos} = camera;
+	let r = from_2d_coord_to_ray(e.clientX - WIDTH/2 - 8, -e.clientY + HEIGHT/2 + 7);
 
-	let intersection = raycast(r);
+	let intersection = raycast(pos, r);
 	if (intersection == null) {
-		//console.log("no surface found");
+		//console.log("no polygon found");
 		return;
 	}
 
@@ -408,13 +462,15 @@ for (let i = -size; i <= size; i+=5) {
 
 let s = 50;
 
+
 let square = {
 	points: [ P(0,0,0), P(s,0,0), P(s,s,0), P(0,s,0) ],
 	n: P(0,0,-1),
 };
 
 let cube = make_prism(square, s);
-cube.params = {fillStyle: "#d6c0e8"};
+cube.params = {fillStyle: "#d6c0e8" };
+cube.color = [255,0,0];
 
 let triangle = {
 	points: [ P(0,0,0), P(0,s,0), P(0,s/2,s) ],
@@ -423,31 +479,118 @@ let triangle = {
 
 let roof = make_prism(triangle, s/3);
 
-move(roof, P(60,0,0) );
-roof.params = {fillStyle: "#dbf2c6"};
+move(roof, P(30,-30,0) );
+roof.params = {fillStyle: "#dbf2c6" };
+roof.color = [0,255,0];
 
-let polygon = make_regular_polygon(5, 100);
-let column = make_prism(polygon, 50);
+let regular_polygon = make_regular_polygon(10, 100);
+let column = make_prism(regular_polygon, 50);
 column.params = {fillStyle: "grey"};
 
-let pyramid = make_pyramid(polygon, s);
+let pyramid = make_pyramid(regular_polygon, s);
 pyramid.params = {fillStyle: "#d6c0e8"};
 
-let world = [roof, cube];
+let world = [cube, roof];
+
+for (let i=0; i < world.length; i++) {
+	to_triangles(world[i]);
+}
+
 let lines = [];
-let dots = [];
 
 setInterval(function(){
 	// Movements
-	//rotate_figure(column, 0.02);
+	rotate_figure(cube, 0.01);
+	//look_at(cube[0].points[0] );
 }, freq);
+
+let prev_pos = camera.pos;
+
+let cam_path = [];
+
+let all_polygons = [];
+for (let figure of world) all_polygons = all_polygons.concat(figure.polygons);
+
+
+setInterval(function(){
+	for (let p of all_polygons) {
+		p.distance = len( subtract(camera.pos, middle_point(p) ));
+	}
+	all_polygons.sort( (a,b) => a.distance < b.distance);
+}, 200);
+
 
 setInterval(function(){
 	clear_canvas();
+	
+	calc_camera_vars(camera);
+
+	if (holding.ShiftLeft ) {
+		if ( len(subtract(camera.pos, prev_pos)) > 3 ) {
+			console.log("New line in the path!");
+			cam_path.push({a:prev_pos, b:camera.pos});
+			prev_pos = camera.pos;
+		}
+	}
+	else prev_pos = camera.pos;
 
 	for (let L of grid) draw_line(L.a, L.b, {strokeStyle: "grey"});
-	for (let thing of world) draw_3d(thing);
-	for (let L of lines) draw_line(L.a, L.b, {circle_at_the_tip: true});
 
-	//draw_surface(polygon);
+	for (let p of all_polygons) draw_polygon(p);
+
+
+	for (let L of lines) draw_line(L.a, L.b, {circle_at_the_tip: true});
+	for (let L of cam_path) draw_line(L.a, L.b, {});
+
+	//draw_polygon(polygon);
 }, freq);
+
+
+/*
+var imgData = ctx.createImageData(xc*2, yc*2);
+
+
+setInterval(function(){
+	let pixel_x = 0, pixel_y = 0;
+
+	calc_camera_vars(camera);
+
+	for (let i = 0; i < imgData.data.length; i += 4) {
+		//if (i > 1000) break;
+
+		pixel_x++;
+		if ( i % (xc*8) == 0) {
+			pixel_x = 0;
+			pixel_y++;
+		}
+
+		//console.log(pixel_x, pixel_y);
+
+		let {n,pos} = camera;
+		let r = from_2d_coord_to_ray(pixel_x - xc, -pixel_y + yc);
+
+		let intersection = null;
+		//let intersection = raycast(pos, r);
+		
+		//console.log(r);
+		if (intersection == null) {
+			//console.log("no polygon found");
+			imgData.data[i+0] = 0;
+			imgData.data[i+1] = 0;
+			imgData.data[i+2] = 0;
+			imgData.data[i+3] = 255;
+			continue;
+		}
+
+		let c = intersection.polygon.parent.color;
+
+		imgData.data[i+0] = c[0];
+		imgData.data[i+1] = c[1];
+		imgData.data[i+2] = c[2];
+		imgData.data[i+3] = 255;
+	}
+
+	ctx.putImageData(imgData, 10, 10); 
+}, 50);
+
+*/
